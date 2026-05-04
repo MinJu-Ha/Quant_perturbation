@@ -1,0 +1,43 @@
+# Large / generated data — never commit
+data/raw/*
+data/processed/*
+results/figures/*
+results/tables/*
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+!results/figures/.gitkeep
+!results/tables/.gitkeep
+
+# Single-cell / model artefacts
+*.rds
+*.RDS
+*.h5ad
+*.h5Seurat
+*.loom
+*.pkl
+*.pickle
+*.npz
+*.pt
+*.bin
+
+# Plain text data dumps (Seurat exports). Keep README/markdown.
+data/**/*.txt
+data/**/*.csv
+data/**/*.tsv
+
+# Python / Jupyter
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.venv/
+.env
+
+# IDE / OS
+.DS_Store
+.idea/
+.vscode/
+
+# R
+.Rhistory
+.RData
+.Rproj.user/

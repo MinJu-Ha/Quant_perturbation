@@ -1,0 +1,25 @@
+name: bcl6-celloracle
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - python=3.10
+  - pip
+  - numpy
+  - pandas
+  - scipy
+  - scikit-learn
+  - matplotlib
+  - seaborn
+  - scanpy
+  - anndata
+  - python-igraph
+  - leidenalg
+  - jupyter
+  - ipykernel
+  - pyyaml
+  - tqdm
+  - h5py
+  - pip:
+      - celloracle
+      - genomepy
