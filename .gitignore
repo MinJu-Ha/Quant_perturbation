@@ -25,6 +25,10 @@ data/**/*.txt
 data/**/*.csv
 data/**/*.tsv
 
+# Per-model outputs are reproducible from the raw data + each model's pipeline.
+models/*/results/*
+!models/*/results/.gitkeep
+
 # Python / Jupyter
 __pycache__/
 *.pyc

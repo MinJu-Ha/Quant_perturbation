@@ -5,7 +5,7 @@ paths:
   chip_targets_csv: data/raw/Bcl6_ChIP_target_P0.05.csv
   exported_meta_csv: data/processed/Cardiomyocyte_meta.csv
   exported_expression_csv: data/processed/Cardiomyocyte_SCT_scaled.txt
-  perturbation_outputs_dir: data/processed/perturbations
+  exported_counts_csv: data/processed/Cardiomyocyte_RNA_counts.txt
   processed_dir: data/processed
   tables_dir: results/tables
   figures_dir: results/figures
@@ -23,12 +23,11 @@ metadata:
     - Donor
 
 perturbation:
+  gene: BCL6
   target_gene_candidates:
     - BCL6
     - Bcl6
     - bcl6
-  perturbation_type: knockdown
-  knockdown_strength: 0.5
   evaluate_conditions:
     - Rpost
     - NRpost
@@ -42,80 +41,30 @@ classifier:
   random_state: 42
   max_iter: 2000
 
-model_comparison:
-  # Each file should be genes x cells, with gene names in the first column and
-  # cell IDs as column headers. Values must be on the same scale as
-  # exported_expression_csv unless format is delta_expression.
-  perturbation_outputs:
-    - name: celloracle
-      path: data/processed/perturbations/celloracle_bcl6_knockdown_delta.csv
+model_results:
+  root: models
+  standard_filename: standard_perturbation.csv
+  manifest_csv: results/tables/model_result_manifest.csv
+  quantification_prefix: model_quantification
+  models:
+    - name: CellOracle
+      folder: models/CellOracle
       format: delta_expression
-    - name: scgpt
-      path: data/processed/perturbations/scgpt_bcl6_knockdown_expression.csv
+      native_candidates:
+        - results/celloracle_bcl6_knockdown_delta.csv
+        - results/celloracle_bcl6_native.h5ad
+        - results/celloracle_bcl6_native.npz
+    - name: scGPT
+      folder: models/scGPT
       format: perturbed_expression
-    - name: geneformer
-      path: data/processed/perturbations/geneformer_bcl6_knockdown_expression.csv
+      native_candidates:
+        - results/scgpt_bcl6_knockdown_expression.csv
+        - results/scgpt_bcl6_native.h5ad
+        - results/scgpt_bcl6_native.npz
+    - name: Geneformer
+      folder: models/Geneformer
       format: perturbed_expression
-
-end_to_end:
-  run_inspection: true
-  run_export: true
-  run_classifier: true
-  run_model_perturbations: true
-  run_comparison: true
-  stop_on_model_failure: false
-
-model_runners:
-  # mode options:
-  # - external_command: run the command listed below. The command must write the
-  #   output file configured in model_comparison.perturbation_outputs.
-  # - python_api: use the lightweight adapter in scripts/perturbation_adapters.
-  #
-  # The python_api adapters are intentionally thin because each upstream package
-  # has substantial model-specific setup: CellOracle needs a fitted oracle/GRN,
-  # scGPT needs a checkpoint and vocab, and Geneformer needs tokenized input plus
-  # a pretrained/fine-tuned model path.
-  celloracle:
-    enabled: false
-    mode: external_command
-    command:
-      - python
-      - scripts/07_run_celloracle_bcl6.py
-      - --config
-      - configs/config.yaml
-    output_path: data/processed/perturbations/celloracle_bcl6_knockdown_delta.csv
-    output_format: delta_expression
-    # Native output produced by notebooks/10_celloracle_bcl6.ipynb (or any other
-    # CellOracle pipeline). Supported: .h5ad with imputed_count/simulated_count
-    # layers, .npz with original/perturbed/gene_names/cell_ids, or a pickled
-    # Oracle object.
-    native_output_path: data/processed/perturbations/celloracle_bcl6_native.h5ad
-  scgpt:
-    enabled: false
-    mode: external_command
-    command:
-      - python
-      - scripts/08_run_scgpt_bcl6.py
-      - --config
-      - configs/config.yaml
-    output_path: data/processed/perturbations/scgpt_bcl6_knockdown_expression.csv
-    output_format: perturbed_expression
-    # Native output produced by notebooks/20_scgpt_bcl6.ipynb (or any other
-    # scGPT perturbation pipeline). Supported: .h5ad with .layers["perturbed"]
-    # or .X = perturbed expression, or .npz with perturbed/gene_names/cell_ids.
-    native_output_path: data/processed/perturbations/scgpt_bcl6_native.h5ad
-  geneformer:
-    enabled: false
-    mode: external_command
-    command:
-      - python
-      - scripts/09_run_geneformer_bcl6.py
-      - --config
-      - configs/config.yaml
-    output_path: data/processed/perturbations/geneformer_bcl6_knockdown_expression.csv
-    output_format: perturbed_expression
-    # Native output produced by notebooks/30_geneformer_bcl6.ipynb. .npz with
-    # cell_ids / original_embeddings / perturbed_embeddings. Embeddings are
-    # projected back to expression space via ridge regression.
-    native_output_path: data/processed/perturbations/geneformer_bcl6_native.npz
-    ridge_alpha: 1.0
+      ridge_alpha: 1.0
+      native_candidates:
+        - results/geneformer_bcl6_knockdown_expression.csv
+        - results/geneformer_bcl6_native.npz

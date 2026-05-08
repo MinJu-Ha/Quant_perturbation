@@ -1,259 +1,126 @@
 # BCL6 Recovery-State Perturbation Project
 
-## Goal
+Quantitatively test whether **BCL6 in silico perturbation** shifts post-LVAD
+cardiomyocytes toward a **recovery-like transcriptional state**, and compare
+the answer across **CellOracle**, **scGPT**, and **Geneformer**.
 
-Quantitatively test whether **BCL6 in silico perturbation** shifts post-LVAD cardiomyocytes toward a **recovery-like transcriptional state**.
+This repo only owns the **shared scoring/quantification path**. Each model is
+run upstream (in its own pipeline / notebook). Drop the result into
+`models/<Name>/results/` and the scripts below pick it up.
 
-The project is also set up to compare perturbation outputs from multiple models,
-especially **CellOracle**, **scGPT**, and **Geneformer**, using the same recovery
-classifier and centroid-distance metrics.
-
-## Main question
-
-For `post_cardiomyocyte.rds`:
-
-> If we perturb BCL6 in post-LVAD cardiomyocytes, do cells become more similar to recovered cardiomyocytes than non-recovered cardiomyocytes?
-
-## Data expected
-
-Place these files in `data/raw/`:
+## Inputs and exports
 
 ```text
-post_cardiomyocyte.rds
-Bcl6_ChIP_target_P0.05.csv
+data/raw/post_cardiomyocyte.rds
+data/raw/Bcl6_ChIP_target_P0.05.csv
 ```
 
-Optional, if already exported:
+Step 1 exports them into:
 
 ```text
-Cardiomyocyte_meta.csv
-Cardiomyocyte_SCT_scaled.txt
+data/processed/Cardiomyocyte_meta.csv
+data/processed/Cardiomyocyte_SCT_scaled.txt   # SCT scale.data, BCL6 + ChIP genes
+data/processed/Cardiomyocyte_RNA_counts.txt   # RNA counts slot, BCL6 + ChIP genes
 ```
+
+The RNA counts file is what scGPT / Geneformer should consume. SCT_scaled is
+what the recovery classifier and centroid metrics use.
 
 ## Labels
 
 ```text
-Recovered-like: Rpre, Rpost
-Non-recovered-like: NRpre, NRpost
-Reference/control: Donor
+recovered:     Rpre, Rpost
+non-recovered: NRpre, NRpost
+reference:     Donor
 ```
 
-## Quantitative outputs
+Edit them in `configs/config.yaml -> metadata`.
 
-1. Recovery classifier probability
-2. Recovery signature score / centroid distance
-3. BCL6 perturbation-induced shift
-4. Cross-model concordance across CellOracle, scGPT, and Geneformer
+## Per-model output layout
 
-Main score:
+Each model lives under its own folder. Drop either a native artefact or a
+ready-made standard CSV in `results/`:
 
 ```text
-delta_recovery_probability =
-perturbed_recovery_probability - original_recovery_probability
+models/CellOracle/results/
+    standard_perturbation.csv             # gene x cell, delta_expression
+    celloracle_bcl6_native.h5ad           # OR: AnnData with imputed_count + simulated_count layers
+models/scGPT/results/
+    standard_perturbation.csv             # gene x cell, perturbed_expression
+    scgpt_bcl6_native.h5ad                # OR: AnnData with .layers["perturbed"]
+models/Geneformer/results/
+    geneformer_bcl6_native.npz            # cell_ids + original_embeddings + perturbed_embeddings
+                                          # script 03 projects to expression via ridge regression
 ```
 
-Interpretation:
+Add / remove models or change paths in `configs/config.yaml -> model_results.models[]`.
+
+## Scripts (run in order)
 
 ```text
-delta > 0: BCL6 perturbation makes cells more recovery-like
-delta < 0: BCL6 perturbation makes cells less recovery-like
+scripts/01_export_from_seurat.R                      # rds -> meta + SCT_scaled + RNA counts
+scripts/02_train_recovery_classifier.py              # logistic recovered-vs-nonrecovered classifier
+scripts/03_check_and_transform_model_results.py      # native -> standard CSV + manifest
+scripts/04_quantify_model_results.py                 # apply classifier + centroid metrics per model
+scripts/05_compare_and_plot_model_results.py         # pairwise concordance + box plots
 ```
 
-Centroid score:
+Helpers:
 
 ```text
-recovery_shift_score =
-distance(original cell, recovered centroid)
--
-distance(perturbed cell, recovered centroid)
-```
-
-Interpretation:
-
-```text
-score > 0: perturbation moves the cell closer to recovered state
-score < 0: perturbation moves the cell farther from recovered state
+scripts/replay_celloracle.py    # one-off: replay simulate_shift on an existing oracle
+scripts/converters/             # native -> standard converters used by script 03
 ```
 
 ## Quick start
 
 ```bash
-Rscript scripts/00_inspect_post_cardiomyocyte.R
+# 1. Data prep (R, slow on 5 GB rds)
 Rscript scripts/01_export_from_seurat.R
-python scripts/02_bcl6_target_recovery_classifier.py --config configs/config.yaml
-python scripts/03_simulate_bcl6_perturbation.py --config configs/config.yaml
-python scripts/04_plot_bcl6_perturbation_results.py --config configs/config.yaml
+
+# 2. Train recovery classifier
+python scripts/02_train_recovery_classifier.py --config configs/config.yaml
+
+# 3. Drop each model's output into models/<Name>/results/, then:
+python scripts/03_check_and_transform_model_results.py --config configs/config.yaml
+python scripts/04_quantify_model_results.py           --config configs/config.yaml
+python scripts/05_compare_and_plot_model_results.py   --config configs/config.yaml
 ```
 
-## Comparing CellOracle, scGPT, and Geneformer
+Missing models are skipped automatically by step 3 (see
+`results/tables/model_result_manifest.csv`).
 
-This repo treats the three model runs as upstream perturbation engines. After
-each model predicts a BCL6 perturbation result, export one matrix per model into
-`data/processed/perturbations/`.
+## CellOracle replay (shortcut)
 
-Expected format:
-
-```text
-gene,cell_1,cell_2,cell_3
-GeneA,0.12,0.08,-0.03
-GeneB,-0.31,-0.10,0.22
-```
-
-Rows are genes, columns are cells, and values must use the same expression scale
-as `data/processed/Cardiomyocyte_SCT_scaled.txt`.
-
-Supported model-output types in `configs/config.yaml`:
-
-```text
-perturbed_expression: predicted expression after BCL6 perturbation
-delta_expression: predicted expression change after BCL6 perturbation
-```
-
-Default expected files:
-
-```text
-data/processed/perturbations/celloracle_bcl6_knockdown_delta.csv
-data/processed/perturbations/scgpt_bcl6_knockdown_expression.csv
-data/processed/perturbations/geneformer_bcl6_knockdown_expression.csv
-```
-
-Run:
+If you already ran the BCL6 KO simulate_shift in a CellOracle notebook but
+did not save the post-perturbation oracle, replay just that step:
 
 ```bash
-python scripts/05_compare_perturbation_models.py --config configs/config.yaml --write-template
-python scripts/05_compare_perturbation_models.py --config configs/config.yaml
+conda activate celloracle
+python scripts/replay_celloracle.py \
+    --oracle <path>/Cardiomyocyte2.celloracle.oracle \
+    --links  <path>/links_cardiomyocyte2_cm.subtype.celloracle.links \
+    --target BCL6 \
+    --out    models/CellOracle/results/celloracle_bcl6_native.h5ad
 ```
 
-Main comparison outputs:
+## Quantification metrics
+
+Per cell:
 
 ```text
-results/tables/perturbation_model_cell_scores.csv
-results/tables/perturbation_model_overall_summary.csv
-results/tables/perturbation_model_by_condition_summary.csv
-results/tables/perturbation_model_post_only_summary.csv
-results/tables/perturbation_model_pairwise_cell_concordance.csv
-results/tables/perturbation_model_pairwise_gene_signature_concordance.csv
+delta_recovery_probability = perturbed_recovery_probability - original_recovery_probability
+recovery_shift_score       = dist(orig, recovered_centroid) - dist(perturbed, recovered_centroid)
+nonrecovery_escape_score   = dist(perturbed, nonrec_centroid) - dist(orig, nonrec_centroid)
 ```
 
-The key numerical comparison is still `delta_recovery_probability`, but now it is
-computed separately for each model. The pairwise concordance tables quantify
-whether CellOracle, scGPT, and Geneformer agree at the cell level and gene
-perturbation-signature level.
+`> 0` means the perturbation moves the cell toward the recovered state.
+Outputs: `results/tables/model_quantification_*.csv`,
+`results/figures/model_quantification_*.png`.
 
-## End-to-end workflow
+## Caution
 
-The full intended workflow is:
-
-```text
-RDS + BCL6 target list
-  -> inspect and export Seurat data
-  -> train a recovered vs non-recovered classifier
-  -> run the same BCL6 deletion/knockdown with CellOracle, scGPT, Geneformer
-  -> collect each model output
-  -> score each model with the same recovery metrics
-  -> compare model-level and pairwise concordance results
-```
-
-Run the orchestrator:
-
-```bash
-python scripts/10_run_end_to_end_pipeline.py --config configs/config.yaml
-```
-
-For a dry run of the shared preprocessing/scoring path without running model
-engines:
-
-```bash
-python scripts/10_run_end_to_end_pipeline.py --config configs/config.yaml --skip-models
-```
-
-Model execution is controlled by `model_runners` in `configs/config.yaml`.
-Each runner has a **native artefact path** (the model's own raw output) and a
-**standard output path** (the project's genes x cells CSV). The runner scripts
-do nothing except convert from one to the other:
-
-```text
-notebook (or your own pipeline)
-  -> writes <native_output_path>
-  -> scripts/07-09 read it and write <output_path>
-  -> scripts/05_compare_perturbation_models.py reads <output_path>
-```
-
-This split means a user who already has a CellOracle Oracle, an scGPT
-perturbation `.h5ad`, or Geneformer embedding pickles only has to drop the
-file at `native_output_path` and run scripts/07-09. They do not need to use
-the notebooks.
-
-### Per-model setup
-
-Each model has its own conda environment so dependencies do not collide:
-
-```bash
-conda env create -f envs/celloracle.yml
-conda env create -f envs/scgpt.yml
-conda env create -f envs/geneformer.yml
-```
-
-Notebooks (one per model) reproduce the official tutorials, applied to this
-project's exported data:
-
-```text
-notebooks/10_celloracle_bcl6.ipynb   -> data/processed/perturbations/celloracle_bcl6_native.h5ad
-notebooks/20_scgpt_bcl6.ipynb        -> data/processed/perturbations/scgpt_bcl6_native.h5ad
-notebooks/30_geneformer_bcl6.ipynb   -> data/processed/perturbations/geneformer_bcl6_native.npz
-```
-
-Run order for one model (CellOracle shown):
-
-```bash
-conda activate bcl6-celloracle
-jupyter notebook notebooks/10_celloracle_bcl6.ipynb     # produces native h5ad
-conda activate bcl6-recovery
-python scripts/07_run_celloracle_bcl6.py \
-    --config configs/config.yaml                         # native -> standard CSV
-python scripts/05_compare_perturbation_models.py \
-    --config configs/config.yaml                         # score and compare
-```
-
-To enable a runner inside the orchestrator (`scripts/06_run_model_perturbations.py`
-and `scripts/10_run_end_to_end_pipeline.py`), flip `enabled: true` for that
-runner in `configs/config.yaml`.
-
-### Bring-your-own-result
-
-If you ran any of these models elsewhere and already have a native artefact,
-save it in one of these forms (see `scripts/converters/*` for the auto-detect
-logic):
-
-| Model | Acceptable native artefact |
-|-------|----------------------------|
-| CellOracle | `.h5ad` with layers `imputed_count` & `simulated_count`, or `.npz` with `original` / `perturbed` / `gene_names` / `cell_ids`, or pickled Oracle (`.pkl`) post `simulate_shift` |
-| scGPT | `.h5ad` with `.layers["perturbed"]` (or `.X` = perturbed), or `.npz` with `perturbed` / `gene_names` / `cell_ids`, or genes x cells `.csv` |
-| Geneformer | `.npz` with `cell_ids` / `original_embeddings` / `perturbed_embeddings` |
-
-Then point `model_runners.<model>.native_output_path` at the file (or pass
-`--native-output PATH` on the CLI) and run the matching `scripts/0X_run_*.py`.
-
-### Notes on cross-model comparability
-
-- CellOracle outputs a delta in the same scale as the input matrix
-  (`delta_expression` format).
-- scGPT outputs predicted post-perturbation expression (`perturbed_expression`).
-- Geneformer outputs only embedding shifts. We project them back to expression
-  space via ridge regression fitted on the exported expression matrix
-  (`scripts/converters/geneformer_native.py`). Tune `ridge_alpha` in
-  `model_runners.geneformer` if the projection looks unstable.
-- All three feed the same `delta_recovery_probability` /
-  `recovery_shift_score` evaluator, so a per-model bias in absolute scale is
-  partially absorbed by the per-cell normalisation built into those metrics —
-  but absolute deltas should still be interpreted with care.
-
-You can also run just the model collection step (which calls the converters):
-
-```bash
-python scripts/06_run_model_perturbations.py --config configs/config.yaml
-```
-
-## Important caution
-
-The ChIP file provides BCL6 target genes but not the regulatory direction. The first-pass perturbation script infers target direction using correlation with BCL6 expression. This is useful for exploratory analysis, but a stronger mechanistic version should use CellOracle/GRN-based perturbation.
+The ChIP file lists BCL6 target genes but not regulatory direction. The
+recovery classifier learns a data-driven sign per target gene; the
+perturbation models themselves provide the direction. The quantification is
+only as meaningful as each model's perturbation prediction.

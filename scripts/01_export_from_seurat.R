@@ -2,11 +2,28 @@ suppressPackageStartupMessages({
   library(Seurat)
   library(yaml)
   library(ggplot2)
+  library(Matrix)
 })
 
 config <- yaml::read_yaml("configs/config.yaml")
 
 obj <- readRDS(config$paths$seurat_rds)
+
+get_assay_matrix <- function(object, assay, layer) {
+  tryCatch(
+    GetAssayData(object, assay = assay, layer = layer),
+    error = function(layer_error) {
+      GetAssayData(object, assay = assay, slot = layer)
+    }
+  )
+}
+
+pick_features <- function(available_features, requested_features) {
+  exact <- requested_features[requested_features %in% available_features]
+  lower_map <- stats::setNames(available_features, tolower(available_features))
+  case_insensitive <- unname(lower_map[tolower(requested_features)])
+  unique(c(exact, case_insensitive[!is.na(case_insensitive)]))
+}
 
 processed_dir <- config$paths$processed_dir
 tables_dir <- config$paths$tables_dir
@@ -27,25 +44,47 @@ if (is.na(target_gene)) {
   stop("Could not find BCL6/Bcl6/bcl6 in rownames(obj).")
 }
 
+chip <- read.csv(config$paths$chip_targets_csv, check.names = FALSE)
+chip_targets <- unique(gsub("\ufeff", "", as.character(chip[[1]]), fixed = TRUE))
+chip_targets <- chip_targets[!is.na(chip_targets) & chip_targets != ""]
+min_target_genes <- as.integer(config$features$min_target_genes)
+
 obj$cell_id <- colnames(obj)
 meta <- obj@meta.data
 meta$cell_id <- rownames(meta)
 write.csv(meta, config$paths$exported_meta_csv, row.names = TRUE, quote = FALSE)
 
-if ("SCT" %in% Assays(obj)) {
-  DefaultAssay(obj) <- "SCT"
-  expr <- GetAssayData(obj, assay = "SCT", slot = "scale.data")
-  if (nrow(expr) == 0 || ncol(expr) == 0) {
-    warning("SCT scale.data is empty. Falling back to RNA data slot.")
-    DefaultAssay(obj) <- "RNA"
-    expr <- GetAssayData(obj, assay = "RNA", slot = "data")
-  }
-} else {
-  DefaultAssay(obj) <- "RNA"
-  expr <- GetAssayData(obj, assay = "RNA", slot = "data")
+DefaultAssay(obj) <- "RNA"
+obj <- NormalizeData(obj)
+obj <- ScaleData(obj, features = rownames(obj))
+obj <- FindVariableFeatures(obj, selection.method = "vst", nfeatures = 3000)
+
+cat("BCL6 in RNA variable features after re-normalization:", target_gene %in% VariableFeatures(obj[["RNA"]]), "\n")
+
+expr <- get_assay_matrix(obj, assay = "RNA", layer = "scale.data")
+
+features_to_export <- pick_features(rownames(expr), unique(c(target_candidates, chip_targets)))
+if (length(features_to_export) < min_target_genes + 1) {
+  stop(paste("Too few BCL6-related features available for export:", length(features_to_export)))
 }
+expr <- expr[features_to_export, , drop = FALSE]
 
 write.csv(as.matrix(expr), config$paths$exported_expression_csv, quote = FALSE)
+
+counts_path <- config$paths$exported_counts_csv
+if (!is.null(counts_path) && nzchar(counts_path)) {
+  counts_mat <- get_assay_matrix(obj, assay = "RNA", layer = "counts")
+  counts_features <- pick_features(rownames(counts_mat), unique(c(target_candidates, chip_targets)))
+  if (length(counts_features) >= min_target_genes + 1) {
+    counts_sub <- counts_mat[counts_features, , drop = FALSE]
+    counts_dense <- as.matrix(counts_sub)
+    storage.mode(counts_dense) <- "integer"
+    write.csv(counts_dense, counts_path, quote = FALSE)
+    cat("Wrote RNA raw counts to:", counts_path, "(", nrow(counts_dense), "genes x", ncol(counts_dense), "cells )\n")
+  } else {
+    cat("Skipping raw counts export — too few BCL6-related features in counts slot.\n")
+  }
+}
 
 bcl6_df <- FetchData(obj, vars = c(target_gene, condition_col))
 colnames(bcl6_df)[1] <- "BCL6_expression"
